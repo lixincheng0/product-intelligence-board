@@ -20,6 +20,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
 const store = createStore(path.join(__dirname, "data", "store.json"));
 const sessionSecret = process.env.SESSION_SECRET || "local-product-intelligence-board-secret";
+const mirrorReadOnly = process.env.MIRROR_READ_ONLY === "true";
+
+const mirrorSafePostRoutes = new Set([
+  "/api/login",
+  "/api/logout",
+  "/api/session/profile",
+]);
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -619,6 +626,12 @@ export async function handleRequest(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname.startsWith("/api/")) {
+      if (mirrorReadOnly && req.method !== "GET" && !mirrorSafePostRoutes.has(url.pathname)) {
+        return sendJson(res, 403, {
+          error: "This CEO demo mirror is read-only to protect the production workspace.",
+          code: "MIRROR_READ_ONLY",
+        });
+      }
       await handleApi(req, res, url.pathname);
     } else {
       await serveStatic(req, res, url.pathname);
