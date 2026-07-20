@@ -1,3 +1,5 @@
+import { DEMO_WEEKS, SAMPLE_MESSAGE, compareDemoWeeks, computeDemoRisks, extractDemoUpdate, getDemoItems, scanDemoPrivacy } from "./demo-intelligence.js";
+
 const state = {
   token: localStorage.getItem("pib_token") || "",
   role: localStorage.getItem("pib_role") || "",
@@ -27,6 +29,19 @@ const state = {
   guideOpen: false,
   error: "",
   modules: loadModuleData(),
+  demo: {
+    weekIndex: 4,
+    compareFrom: 2,
+    groupBy: "area",
+    filter: "",
+    selectedId: "",
+    captureStep: "input",
+    captureText: "",
+    privacy: null,
+    extraction: null,
+    reviewTab: "updates",
+    notice: "",
+  },
 };
 
 const app = document.querySelector("#app");
@@ -439,6 +454,8 @@ function render() {
   else if (state.view === "meetings") renderMeetings();
   else if (state.view === "capacity") renderPmCapacity();
   else if (state.view === "reportExport") renderReportExport();
+  else if (state.view === "smartCapture") renderSmartCapture();
+  else if (state.view === "executionIntelligence") renderExecutionIntelligence();
   else renderDashboard();
   mountRoleGuide();
 }
@@ -760,6 +777,8 @@ function renderDashboard() {
         <div class="top-actions">
           <button class="secondary" data-page="dashboard">Dashboard</button>
           <button class="secondary" data-page="pmView">PM View</button>
+          <button class="secondary demo-nav-button" data-page="smartCapture">AI Smart Capture</button>
+          <button class="secondary demo-nav-button" data-page="executionIntelligence">Execution Intelligence</button>
           ${["product_lead", "admin"].includes(state.role) ? `<button class="secondary" data-page="archiveFolder">Archive Folder</button>` : ""}
           ${state.role === "product_lead" ? `<button class="secondary" data-page="pmManagement">Management</button>` : ""}
           ${state.role === "admin" ? `<button class="secondary" data-page="adminSettings">Admin / Settings</button>` : ""}
@@ -3822,6 +3841,208 @@ async function loadPreviousReference() {
   } catch (error) {
     box.textContent = error.message;
   }
+}
+
+function renderDemoShell(title, subtitle, content) {
+  app.innerHTML = html`
+    <main class="demo-page">
+      <div class="demo-safety-banner" role="status">
+        <strong>Demo Mode</strong><span>All displayed records are fictional. Do not enter confidential or production information.</span>
+      </div>
+      <header class="demo-topbar">
+        <div>
+          <div class="demo-eyebrow">Product Intelligence Lab · Read-only mirror</div>
+          <h1>${escapeHtml(title)}</h1>
+          <p>${escapeHtml(subtitle)}</p>
+        </div>
+        <nav class="demo-nav" aria-label="Demo navigation">
+          <button class="secondary" data-demo-page="dashboard">Board</button>
+          <button class="secondary ${state.view === "smartCapture" ? "active" : ""}" data-demo-page="smartCapture">Smart Capture</button>
+          <button class="secondary ${state.view === "executionIntelligence" ? "active" : ""}" data-demo-page="executionIntelligence">Control Room</button>
+          <button class="secondary" data-demo-logout>Logout</button>
+        </nav>
+      </header>
+      ${content}
+    </main>`;
+  bindDemoNavigation();
+}
+
+function bindDemoNavigation() {
+  document.querySelectorAll("[data-demo-page]").forEach((button) => button.addEventListener("click", async () => {
+    state.view = button.dataset.demoPage;
+    if (state.view === "dashboard") await loadDashboard();
+    render();
+  }));
+  document.querySelector("[data-demo-logout]")?.addEventListener("click", async () => {
+    await api("/api/logout", { method: "POST" }).catch(() => {});
+    localStorage.clear();
+    Object.assign(state, { token: "", role: "", selectedPmProfile: "", view: "login", dashboard: null });
+    render();
+  });
+}
+
+function renderSmartCapture() {
+  const demo = state.demo;
+  const content = html`
+    <section class="demo-workspace capture-workspace">
+      <div class="demo-stepper" aria-label="Capture progress">
+        ${[["input", "1", "Paste"], ["sanitize", "2", "Privacy scan"], ["review", "3", "Review draft"], ["done", "4", "Approve"]].map(([key, number, label]) => `<div class="${key === demo.captureStep ? "active" : ""} ${["sanitize", "review", "done"].indexOf(demo.captureStep) > ["sanitize", "review", "done"].indexOf(key) ? "complete" : ""}"><span>${number}</span>${label}</div>`).join("")}
+      </div>
+      ${demo.notice ? `<div class="demo-toast" role="status">${escapeHtml(demo.notice)}</div>` : ""}
+      ${demo.captureStep === "input" ? renderCaptureInput() : demo.captureStep === "sanitize" ? renderPrivacyReview() : demo.captureStep === "review" ? renderCaptureReview() : renderCaptureComplete()}
+    </section>`;
+  renderDemoShell("AI Smart Capture", "Turn a fictional weekly message into reviewed, structured intelligence — without touching production data.", content);
+  bindSmartCaptureEvents();
+}
+
+function renderCaptureInput() {
+  return html`<div class="demo-two-column">
+    <form class="demo-panel capture-form" id="demo-capture-form">
+      <div class="demo-panel-heading"><div><span class="demo-kicker">Paste-only intake</span><h2>Source message</h2></div><span class="demo-badge neutral">Simulated AI</span></div>
+      <div class="demo-form-grid">
+        <label>Source title<input name="title" required value="Fictional Portfolio Weekly Review"></label>
+        <label>Source date<input name="date" type="date" required value="2026-07-08"></label>
+        <label>Source type<select name="type"><option>Weekly leadership update</option><option>Meeting notes</option><option>Planning review</option></select></label>
+        <label>Fictional source ref (optional)<input name="sourceRef" placeholder="DEMO-W28"></label>
+      </div>
+      <label>Message<textarea name="message" id="demo-message" rows="14" placeholder="Paste fictional or sanitized text only…">${escapeHtml(state.demo.captureText)}</textarea></label>
+      <div class="capture-tools"><button type="button" class="secondary" id="load-demo-message">Load fictional example</button><span id="capture-char-count">${state.demo.captureText.length} characters</span></div>
+      <label class="demo-confirm"><input name="confirmed" type="checkbox"> I confirm this is fictional or fully sanitized and contains no confidential information.</label>
+      <button type="submit" id="scan-message" disabled>Run local privacy scan</button>
+    </form>
+    <aside class="demo-panel demo-explainer">
+      <span class="demo-kicker">Safety architecture</span><h2>What happens here</h2>
+      <ol><li><strong>Local scan</strong><span>Detects links, contact details, mentions, credentials, identifiers and currency.</span></li><li><strong>Sanitized preview</strong><span>You see every replacement before analysis.</span></li><li><strong>Draft extraction</strong><span>Deterministic demo logic creates editable records.</span></li><li><strong>Human approval</strong><span>Nothing enters the demo workspace until reviewed.</span></li></ol>
+      <div class="demo-guardrail"><strong>Original input lifecycle</strong><span>Held only in page memory; never logged, stored, or sent to an external model.</span></div>
+    </aside>
+  </div>`;
+}
+
+function renderPrivacyReview() {
+  const scan = state.demo.privacy || { findings: [], sanitized: "" };
+  return html`<section class="demo-panel privacy-review">
+    <div class="demo-panel-heading"><div><span class="demo-kicker">Local privacy gate</span><h2>${scan.findings.length ? `${scan.findings.length} sensitive pattern types detected` : "No sensitive patterns detected"}</h2></div><span class="demo-badge ${scan.findings.length ? "warning" : "success"}">${scan.findings.length ? "Action required" : "Safe to continue"}</span></div>
+    ${scan.findings.length ? `<div class="finding-list">${scan.findings.map((finding) => `<div><strong>${escapeHtml(finding.label)}</strong><span>${finding.count} replacement${finding.count > 1 ? "s" : ""}</span></div>`).join("")}</div>` : ""}
+    <label>Sanitized preview<textarea id="sanitized-preview" rows="15">${escapeHtml(scan.sanitized)}</textarea></label>
+    <p class="muted">Only the sanitized preview below will be used by the simulated extraction engine. The original is discarded when you continue.</p>
+    <div class="demo-actions"><button class="secondary" id="cancel-scan">Cancel and clear</button><button id="continue-extraction">Use sanitized text</button></div>
+  </section>`;
+}
+
+function captureTabData() {
+  const extraction = state.demo.extraction || { records: [], risks: [], decisions: [], actions: [] };
+  if (state.demo.reviewTab === "risks") return extraction.risks;
+  if (state.demo.reviewTab === "decisions") return extraction.decisions;
+  if (state.demo.reviewTab === "actions") return extraction.actions;
+  return extraction.records;
+}
+
+function renderCaptureReview() {
+  const extraction = state.demo.extraction || { records: [], risks: [], decisions: [], actions: [] };
+  const tabs = [["updates", extraction.records.length], ["risks", extraction.risks.length], ["decisions", extraction.decisions.length], ["actions", extraction.actions.length]];
+  const data = captureTabData();
+  return html`<section class="demo-panel review-panel">
+    <div class="demo-panel-heading"><div><span class="demo-kicker">Human-in-the-loop review</span><h2>Structured intelligence draft</h2></div><span class="demo-badge neutral">${extraction.records.filter((r) => r.approved).length} approved updates</span></div>
+    <div class="review-tabs" role="tablist">${tabs.map(([tab, count]) => `<button class="secondary ${state.demo.reviewTab === tab ? "active" : ""}" data-review-tab="${tab}">${tab[0].toUpperCase() + tab.slice(1)} <span>${count}</span></button>`).join("")}</div>
+    <div class="review-list">${data.length ? data.map((record) => state.demo.reviewTab === "updates" ? `<article class="review-record ${record.approved ? "approved" : "ignored"}"><label class="record-check"><input type="checkbox" data-approve-record="${record.id}" ${record.approved ? "checked" : ""}><span>Include</span></label><div><div class="record-title"><strong>${escapeHtml(record.product)}</strong><span class="status-pill ${statusClass(record.status)}">${escapeHtml(record.status)}</span><span class="confidence">${Math.round(record.confidence * 100)}% confidence</span></div><p>${escapeHtml(record.sourceExcerpt)}</p><div class="record-fields"><span>Owner <strong>${escapeHtml(record.owner)}</strong></span><span>Progress <strong>${record.progress ?? "Review"}${record.progress ? "%" : ""}</strong></span><span>Next <strong>${escapeHtml(record.nextStep || "Not detected")}</strong></span></div></div></article>` : `<article class="review-record compact"><div><strong>${escapeHtml(record.product)}</strong><p>${escapeHtml(record.text)}</p>${record.owner ? `<span class="confidence">Owner: ${escapeHtml(record.owner)}</span>` : ""}</div></article>`).join("") : `<div class="demo-empty">No ${escapeHtml(state.demo.reviewTab)} detected. This is a valid result, not an extraction failure.</div>`}</div>
+    <div class="demo-actions"><button class="secondary" id="start-over-capture">Start over</button><button id="approve-demo-records" ${extraction.records.some((record) => record.approved) ? "" : "disabled"}>Approve selected drafts</button></div>
+  </section>`;
+}
+
+function renderCaptureComplete() {
+  const count = state.demo.extraction?.records.filter((record) => record.approved).length || 0;
+  return html`<section class="demo-panel capture-complete"><div class="complete-mark">✓</div><span class="demo-kicker">Review complete</span><h2>${count} fictional records added to the demo workspace</h2><p>Approved drafts were stored locally in this browser only. No production API or shared database was called.</p><div class="demo-actions"><button class="secondary" id="new-capture">Capture another message</button><button id="open-control-room">Open Execution Control Room</button></div></section>`;
+}
+
+function bindSmartCaptureEvents() {
+  const form = document.querySelector("#demo-capture-form");
+  const textarea = document.querySelector("#demo-message");
+  const confirmed = form?.elements.confirmed;
+  const submit = document.querySelector("#scan-message");
+  const sync = () => { if (submit) submit.disabled = !(confirmed?.checked && textarea?.value.trim()); document.querySelector("#capture-char-count") && (document.querySelector("#capture-char-count").textContent = `${textarea?.value.length || 0} characters`); };
+  textarea?.addEventListener("input", sync); confirmed?.addEventListener("change", sync);
+  document.querySelector("#load-demo-message")?.addEventListener("click", () => { textarea.value = SAMPLE_MESSAGE; state.demo.captureText = SAMPLE_MESSAGE; sync(); });
+  form?.addEventListener("submit", (event) => { event.preventDefault(); state.demo.captureText = textarea.value; state.demo.privacy = scanDemoPrivacy(textarea.value); state.demo.captureStep = "sanitize"; render(); });
+  document.querySelector("#cancel-scan")?.addEventListener("click", () => { Object.assign(state.demo, { captureText: "", privacy: null, captureStep: "input" }); render(); });
+  document.querySelector("#continue-extraction")?.addEventListener("click", () => { const sanitized = document.querySelector("#sanitized-preview").value; state.demo.captureText = ""; state.demo.extraction = extractDemoUpdate(sanitized); state.demo.privacy.sanitized = ""; state.demo.captureStep = "review"; render(); });
+  document.querySelectorAll("[data-review-tab]").forEach((button) => button.addEventListener("click", () => { state.demo.reviewTab = button.dataset.reviewTab; render(); }));
+  document.querySelectorAll("[data-approve-record]").forEach((input) => input.addEventListener("change", () => { const record = state.demo.extraction.records.find((entry) => entry.id === input.dataset.approveRecord); if (record) record.approved = input.checked; render(); }));
+  document.querySelector("#start-over-capture")?.addEventListener("click", resetDemoCapture);
+  document.querySelector("#approve-demo-records")?.addEventListener("click", () => { const approved = state.demo.extraction.records.filter((record) => record.approved).map(({ sourceExcerpt, ...record }) => record); localStorage.setItem("pib_fictional_demo_records", JSON.stringify(approved)); state.demo.captureStep = "done"; render(); });
+  document.querySelector("#new-capture")?.addEventListener("click", resetDemoCapture);
+  document.querySelector("#open-control-room")?.addEventListener("click", () => { state.view = "executionIntelligence"; render(); });
+}
+
+function resetDemoCapture() { Object.assign(state.demo, { captureStep: "input", captureText: "", privacy: null, extraction: null, reviewTab: "updates", notice: "" }); render(); }
+
+function filteredDemoItems(items) {
+  const filter = state.demo.filter;
+  if (!filter) return items;
+  if (filter === "blocked") return items.filter((item) => item.status === "Blocked");
+  if (filter === "stale") return items.filter((item) => item.fresh >= 7);
+  if (filter === "low-completeness") return items.filter((item) => item.completeness < 75);
+  if (filter === "repeat-risk") return items.filter((item) => item.riskCount >= 3);
+  return items.filter((item) => item.area === filter || item.segment === filter || item.status === filter);
+}
+
+function renderExecutionIntelligence() {
+  const allItems = getDemoItems(state.demo.weekIndex);
+  const items = filteredDemoItems(allItems);
+  const risks = computeDemoRisks(items);
+  const selected = allItems.find((item) => item.id === state.demo.selectedId) || null;
+  const compare = compareDemoWeeks(state.demo.compareFrom, state.demo.weekIndex);
+  const critical = risks.filter((risk) => risk.severity === "critical").length;
+  const avgProgress = Math.round(allItems.reduce((sum, item) => sum + item.progress, 0) / allItems.length);
+  const content = html`<section class="control-room">
+    <section class="control-header demo-panel">
+      <div><span class="demo-kicker">Overview → Explore → Diagnose → Act</span><h2>Portfolio execution, explained</h2><p>Reported progress and rule-based signals are shown separately. No black-box forecast.</p></div>
+      <div class="control-actions"><label>Group map by<select id="demo-group"><option value="area" ${state.demo.groupBy === "area" ? "selected" : ""}>Product area</option><option value="segment" ${state.demo.groupBy === "segment" ? "selected" : ""}>Segment</option><option value="status" ${state.demo.groupBy === "status" ? "selected" : ""}>Status</option><option value="owner" ${state.demo.groupBy === "owner" ? "selected" : ""}>Owner</option></select></label><button class="secondary" id="clear-demo-filter" ${state.demo.filter ? "" : "disabled"}>Clear filter</button></div>
+    </section>
+    <section class="signal-strip"><div><span>Reported progress</span><strong>${avgProgress}%</strong><small>+4 pts vs prior week</small></div><div><span>Attention required</span><strong>${risks.length}</strong><small>${critical} critical signals</small></div><div><span>Fresh evidence</span><strong>${allItems.filter((item) => item.fresh < 7).length}/${allItems.length}</strong><small>Updated within 7 days</small></div><div><span>Delivery confidence</span><strong>Medium</strong><small>Rule-based · explainable</small></div></section>
+    <section class="playback demo-panel"><div><button class="secondary playback-button" id="play-demo" aria-label="Play weekly history">▶</button><div><strong>Weekly playback</strong><span>See the portfolio change as one coordinated system.</span></div></div><input id="week-playback" type="range" min="0" max="4" value="${state.demo.weekIndex}" aria-label="Reporting week"><div class="week-labels">${DEMO_WEEKS.map((week, index) => `<span class="${index === state.demo.weekIndex ? "active" : ""}">${week}</span>`).join("")}</div></section>
+    ${state.demo.filter ? `<div class="active-filter">Cross-filter active: <strong>${escapeHtml(state.demo.filter)}</strong><button id="remove-filter" aria-label="Remove filter">×</button></div>` : ""}
+    <section class="control-grid">
+      <div class="demo-panel execution-map-panel"><div class="demo-panel-heading"><div><span class="demo-kicker">Explore</span><h2>Interactive execution map</h2></div><span class="demo-badge neutral">${items.length} workstreams</span></div>${renderExecutionMap(items)}</div>
+      <aside class="demo-panel attention-panel"><div class="demo-panel-heading"><div><span class="demo-kicker">Diagnose</span><h2>Attention required</h2></div><span class="demo-badge critical">${critical} critical</span></div><div class="attention-list">${risks.slice(0, 8).map((risk) => `<button data-risk-item="${risk.itemId}"><span class="risk-dot ${risk.severity}"></span><span><strong>${escapeHtml(risk.itemName)}</strong><small>${escapeHtml(risk.rule)} · ${escapeHtml(risk.detail)}</small></span><b>→</b></button>`).join("")}</div></aside>
+    </section>
+    <section class="demo-panel heatmap-panel"><div class="demo-panel-heading"><div><span class="demo-kicker">Cross-filter</span><h2>Portfolio signal matrix</h2></div><span class="muted">Select any cell to coordinate the map and risk list</span></div>${renderSignalHeatmap(allItems)}</section>
+    <section class="demo-panel compare-panel"><div class="demo-panel-heading"><div><span class="demo-kicker">Compare</span><h2>What changed?</h2></div><label>Compare from<select id="compare-week">${DEMO_WEEKS.slice(0, state.demo.weekIndex).map((week, index) => `<option value="${index}" ${index === state.demo.compareFrom ? "selected" : ""}>${week}</option>`).join("")}</select></label></div><div class="compare-summary">${["Improved", "Deteriorated", "Completed", "No change"].map((outcome) => `<div><strong>${compare.filter((item) => item.outcome === outcome).length}</strong><span>${outcome}</span></div>`).join("")}</div><div class="compare-list">${compare.map((item) => `<button data-select-demo="${item.id}"><span>${escapeHtml(item.name)}</span><strong class="outcome-${item.outcome.toLowerCase().replace(" ", "-")}">${item.delta > 0 ? "+" : ""}${item.delta} · ${item.outcome}</strong></button>`).join("")}</div></section>
+    ${selected ? renderExecutionDrawer(selected, computeDemoRisks([selected])) : ""}
+  </section>`;
+  renderDemoShell("Execution Control Room", "A coordinated view of progress, risk, dependencies and management actions across a fictional portfolio.", content);
+  bindExecutionEvents();
+}
+
+function renderExecutionMap(items) {
+  const width = 760, height = 390;
+  const positions = Object.fromEntries(items.map((item, index) => [item.id, { x: 110 + (index % 4) * 180, y: 90 + Math.floor(index / 4) * 180 }]));
+  const lines = items.flatMap((item) => item.deps.map((dep) => positions[dep] && `<line x1="${positions[dep].x}" y1="${positions[dep].y}" x2="${positions[item.id].x}" y2="${positions[item.id].y}" marker-end="url(#arrow)"/>`)).filter(Boolean).join("");
+  return `<div class="map-legend"><span><i class="on-track"></i>On track</span><span><i class="at-risk"></i>At risk</span><span><i class="blocked"></i>Blocked</span><span>Size = reported progress</span><span>Ring = evidence freshness</span></div><svg class="execution-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Dependency map of fictional workstreams"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z"/></marker></defs><g class="dependency-lines">${lines}</g>${items.map((item) => { const p = positions[item.id]; const radius = 28 + item.progress * .14; return `<g class="map-node ${statusClass(item.status)} ${state.demo.selectedId === item.id ? "selected" : ""}" tabindex="0" role="button" data-select-demo="${item.id}" transform="translate(${p.x} ${p.y})"><circle class="freshness-ring ${item.fresh >= 7 ? "stale" : ""}" r="${radius + 7}"/><circle class="node-body" r="${radius}"/><text class="node-progress" y="4">${item.progress}%</text><text class="node-name" y="${radius + 22}">${escapeHtml(item.name)}</text></g>`; }).join("")}</svg>`;
+}
+
+function renderSignalHeatmap(items) {
+  const columns = ["Decision Intelligence", "Identity", "Fraud", "Monitoring", "Analytics", "Platform", "Operations"];
+  const rows = [{ key: "stale", label: "Stale updates", test: (i) => i.fresh >= 7 }, { key: "blocked", label: "Blocked", test: (i) => i.status === "Blocked" }, { key: "repeat-risk", label: "Repeated risks", test: (i) => i.riskCount >= 3 }, { key: "low-completeness", label: "Low completeness", test: (i) => i.completeness < 75 }];
+  return `<div class="signal-matrix" style="--matrix-columns:${columns.length}"><div></div>${columns.map((column) => `<strong>${escapeHtml(column)}</strong>`).join("")}${rows.map((row) => `<span>${row.label}</span>${columns.map((column) => { const count = items.filter((item) => item.area === column && row.test(item)).length; return `<button data-demo-filter="${row.key}" class="heat-${Math.min(3, count)}" title="Filter by ${row.label}">${count}</button>`; }).join("")}`).join("")}</div>`;
+}
+
+function renderExecutionDrawer(item, risks) {
+  return html`<aside class="demo-drawer" aria-label="Selected workstream details"><div class="drawer-heading"><div><span class="demo-kicker">Act</span><h2>${escapeHtml(item.name)}</h2><span class="status-pill ${statusClass(item.status)}">${escapeHtml(item.status)}</span></div><button class="secondary" id="close-demo-drawer" aria-label="Close details">×</button></div><div class="drawer-metric"><span>${escapeHtml(item.metric)}</span><strong>${item.actual}${escapeHtml(item.unit)}</strong><div><i style="width:${item.progress}%"></i></div><small>${item.progress}% of ${item.target}${escapeHtml(item.unit)} target · reported, not forecast</small></div><div class="drawer-grid"><div><span>Owner</span><strong>${escapeHtml(item.owner)}</strong></div><div><span>Target date</span><strong>${escapeHtml(item.due)}</strong></div><div><span>Freshness</span><strong>${item.fresh} days</strong></div><div><span>Completeness</span><strong>${item.completeness}%</strong></div></div><h3>Why this needs attention</h3><div class="drawer-risks">${risks.length ? risks.map((risk) => `<div><span class="risk-dot ${risk.severity}"></span><p><strong>${escapeHtml(risk.rule)}</strong><small>${escapeHtml(risk.detail)}</small></p></div>`).join("") : `<p class="muted">No active rule-based signals.</p>`}</div><h3>Dependencies</h3><p>${item.deps.length ? item.deps.map((dep) => escapeHtml(dep.replaceAll("-", " "))).join(" · ") : "No upstream dependency"}</p><details class="metric-builder"><summary>Configure metric</summary><label>Template<select><option>Percentage complete</option><option>Count toward target</option><option>Milestone weighted</option></select></label><label>Metric name<input value="${escapeHtml(item.metric)}"></label><div class="demo-form-grid"><label>Current<input type="number" value="${item.actual}"></label><label>Target<input type="number" value="${item.target}"></label></div><button type="button" id="save-demo-metric">Save locally</button></details><div class="drawer-actions"><button class="secondary" id="demo-add-evidence">Add fictional evidence</button><button id="demo-create-action">Create demo action</button></div><p class="drawer-footnote">Demo-only actions are stored locally and never call the production API.</p></aside>`;
+}
+
+let demoPlaybackTimer;
+function bindExecutionEvents() {
+  clearInterval(demoPlaybackTimer);
+  document.querySelector("#demo-group")?.addEventListener("change", (event) => { state.demo.groupBy = event.target.value; render(); });
+  document.querySelector("#week-playback")?.addEventListener("input", (event) => { state.demo.weekIndex = Number(event.target.value); if (state.demo.compareFrom >= state.demo.weekIndex) state.demo.compareFrom = Math.max(0, state.demo.weekIndex - 1); render(); });
+  document.querySelector("#play-demo")?.addEventListener("click", () => { state.demo.weekIndex = 0; render(); demoPlaybackTimer = setInterval(() => { if (state.view !== "executionIntelligence" || state.demo.weekIndex >= 4) return clearInterval(demoPlaybackTimer); state.demo.weekIndex += 1; renderExecutionIntelligence(); }, 900); });
+  document.querySelectorAll("[data-select-demo], [data-risk-item]").forEach((element) => element.addEventListener("click", () => { state.demo.selectedId = element.dataset.selectDemo || element.dataset.riskItem; render(); }));
+  document.querySelectorAll("[data-demo-filter]").forEach((button) => button.addEventListener("click", () => { state.demo.filter = button.dataset.demoFilter; render(); }));
+  document.querySelector("#remove-filter")?.addEventListener("click", () => { state.demo.filter = ""; render(); });
+  document.querySelector("#clear-demo-filter")?.addEventListener("click", () => { state.demo.filter = ""; render(); });
+  document.querySelector("#compare-week")?.addEventListener("change", (event) => { state.demo.compareFrom = Number(event.target.value); render(); });
+  document.querySelector("#close-demo-drawer")?.addEventListener("click", () => { state.demo.selectedId = ""; document.querySelector(".demo-drawer")?.remove(); });
+  ["#save-demo-metric", "#demo-add-evidence", "#demo-create-action"].forEach((selector) => document.querySelector(selector)?.addEventListener("click", () => { state.demo.notice = "Demo action saved locally — production remained untouched."; localStorage.setItem("pib_demo_last_action", new Date().toISOString()); render(); }));
 }
 
 const observer = new MutationObserver(() => {
