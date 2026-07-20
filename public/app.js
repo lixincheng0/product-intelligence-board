@@ -30,6 +30,7 @@ const state = {
   error: "",
   modules: loadModuleData(),
   demo: {
+    intelligenceMode: localStorage.getItem("pib_intelligence_mode") || "live",
     weekIndex: 4,
     compareFrom: 2,
     groupBy: "area",
@@ -41,6 +42,7 @@ const state = {
     extraction: null,
     reviewTab: "updates",
     notice: "",
+    importBundle: loadDemoImportBundle(),
   },
 };
 
@@ -72,6 +74,14 @@ function loadModuleData() {
     };
   } catch {
     return { announcements: [], marketing: [], meetings: [] };
+  }
+}
+
+function loadDemoImportBundle() {
+  try {
+    return JSON.parse(localStorage.getItem("pib_fictional_demo_import") || "null");
+  } catch {
+    return null;
   }
 }
 
@@ -3844,10 +3854,11 @@ async function loadPreviousReference() {
 }
 
 function renderDemoShell(title, subtitle, content) {
+  const liveIntelligence = state.view === "executionIntelligence" && state.demo.intelligenceMode === "live";
   app.innerHTML = html`
     <main class="demo-page">
-      <div class="demo-safety-banner" role="status">
-        <strong>Demo Mode</strong><span>All displayed records are fictional. Do not enter confidential or production information.</span>
+      <div class="demo-safety-banner ${liveIntelligence ? "live" : ""}" role="status">
+        <strong>${liveIntelligence ? "Read-only Mirror" : "Demo Mode"}</strong><span>${liveIntelligence ? "Live Board records are visible. Deterministic local analysis only; no external AI and no write-back." : "All displayed records are fictional. Do not enter confidential or production information."}</span>
       </div>
       <header class="demo-topbar">
         <div>
@@ -3950,8 +3961,15 @@ function renderCaptureReview() {
 }
 
 function renderCaptureComplete() {
-  const count = state.demo.extraction?.records.filter((record) => record.approved).length || 0;
-  return html`<section class="demo-panel capture-complete"><div class="complete-mark">✓</div><span class="demo-kicker">Review complete</span><h2>${count} fictional records added to the demo workspace</h2><p>Approved drafts were stored locally in this browser only. No production API or shared database was called.</p><div class="demo-actions"><button class="secondary" id="new-capture">Capture another message</button><button id="open-control-room">Open Execution Control Room</button></div></section>`;
+  const bundle = state.demo.importBundle || { records: [], risks: [], decisions: [], actions: [] };
+  const matched = bundle.records.filter((record) => getDemoItems(4).some((item) => item.name === record.product)).length;
+  return html`<section class="demo-panel import-summary-panel">
+    <div class="import-summary-heading"><div class="complete-mark">✓</div><div><span class="demo-kicker">Import summary</span><h2>Approved intelligence is ready in the isolated Demo Workspace</h2><p>No production API or shared database was called.</p></div><span class="demo-badge success">Local only</span></div>
+    <div class="import-stats"><div><strong>${bundle.records.length}</strong><span>Updates approved</span></div><div><strong>${bundle.risks.length}</strong><span>Risks created</span></div><div><strong>${bundle.decisions.length}</strong><span>Decisions required</span></div><div><strong>${bundle.actions.length}</strong><span>Actions assigned</span></div></div>
+    <div class="match-summary"><span><strong>${matched}</strong> matched existing fictional workstreams</span><span><strong>${bundle.records.length - matched}</strong> require manual matching</span><span>Imported ${escapeHtml(formatDateTime(bundle.importedAt))}</span></div>
+    <div class="import-preview">${bundle.records.map((record) => `<article><div><strong>${escapeHtml(record.product)}</strong><span class="status-pill ${statusClass(record.status)}">${escapeHtml(record.status)}</span></div><p>${escapeHtml(record.sourceExcerpt || record.nextStep || "Approved structured update")}</p><small>${record.progress == null ? "Metric requires review" : `${record.progress}% reported`} · ${escapeHtml(record.owner)}</small></article>`).join("")}</div>
+    <div class="demo-actions"><button class="secondary" id="new-capture">Capture another message</button><button class="secondary" id="view-imported-records">Review imported records</button><button id="open-control-room">Compare before vs after</button></div>
+  </section>`;
 }
 
 function bindSmartCaptureEvents() {
@@ -3968,9 +3986,24 @@ function bindSmartCaptureEvents() {
   document.querySelectorAll("[data-review-tab]").forEach((button) => button.addEventListener("click", () => { state.demo.reviewTab = button.dataset.reviewTab; render(); }));
   document.querySelectorAll("[data-approve-record]").forEach((input) => input.addEventListener("change", () => { const record = state.demo.extraction.records.find((entry) => entry.id === input.dataset.approveRecord); if (record) record.approved = input.checked; render(); }));
   document.querySelector("#start-over-capture")?.addEventListener("click", resetDemoCapture);
-  document.querySelector("#approve-demo-records")?.addEventListener("click", () => { const approved = state.demo.extraction.records.filter((record) => record.approved).map(({ sourceExcerpt, ...record }) => record); localStorage.setItem("pib_fictional_demo_records", JSON.stringify(approved)); state.demo.captureStep = "done"; render(); });
+  document.querySelector("#approve-demo-records")?.addEventListener("click", () => {
+    const approvedIds = new Set(state.demo.extraction.records.filter((record) => record.approved).map((record) => record.id));
+    const approvedProducts = new Set(state.demo.extraction.records.filter((record) => approvedIds.has(record.id)).map((record) => record.product));
+    const bundle = {
+      importedAt: new Date().toISOString(),
+      records: state.demo.extraction.records.filter((record) => approvedIds.has(record.id)),
+      risks: state.demo.extraction.risks.filter((record) => approvedProducts.has(record.product)),
+      decisions: state.demo.extraction.decisions.filter((record) => approvedProducts.has(record.product)),
+      actions: state.demo.extraction.actions.filter((record) => approvedProducts.has(record.product)),
+    };
+    state.demo.importBundle = bundle;
+    localStorage.setItem("pib_fictional_demo_import", JSON.stringify(bundle));
+    state.demo.captureStep = "done";
+    render();
+  });
   document.querySelector("#new-capture")?.addEventListener("click", resetDemoCapture);
-  document.querySelector("#open-control-room")?.addEventListener("click", () => { state.view = "executionIntelligence"; render(); });
+  document.querySelector("#view-imported-records")?.addEventListener("click", () => { state.demo.captureStep = "review"; render(); });
+  document.querySelector("#open-control-room")?.addEventListener("click", () => { state.demo.intelligenceMode = "fictional"; localStorage.setItem("pib_intelligence_mode", "fictional"); state.view = "executionIntelligence"; render(); });
 }
 
 function resetDemoCapture() { Object.assign(state.demo, { captureStep: "input", captureText: "", privacy: null, extraction: null, reviewTab: "updates", notice: "" }); render(); }
@@ -3985,54 +4018,161 @@ function filteredDemoItems(items) {
   return items.filter((item) => item.area === filter || item.segment === filter || item.status === filter);
 }
 
+function daysSince(value) {
+  if (!value) return 999;
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return 999;
+  return Math.max(0, Math.floor((Date.now() - timestamp) / 86400000));
+}
+
+function liveCompleteness(item) {
+  const fields = [item.title, item.owner, item.status, item.productArea, item.segment, item.targetCompletionDate, item.description || item.currentStatus];
+  return Math.round((fields.filter((value) => String(value || "").trim()).length / fields.length) * 100);
+}
+
+function getLiveIntelligenceItems() {
+  return (state.dashboard?.items || []).filter((item) => !item.archived).map((item) => ({
+    id: `live-${item.id}`,
+    sourceId: item.id,
+    name: item.productWorkstream || item.title || "Untitled workstream",
+    title: item.title || "",
+    area: item.productArea || "Unclassified",
+    segment: item.segment || "Unclassified",
+    owner: item.owner || "Unassigned",
+    status: item.status || "Unknown",
+    reportedStatus: item.status || "Unknown",
+    due: item.targetCompletionDate || "Not configured",
+    metric: "Metric not configured",
+    unit: "",
+    target: null,
+    actual: null,
+    progress: null,
+    previous: null,
+    change: null,
+    fresh: daysSince(item.lastUpdatedAt || item.createdAt),
+    completeness: liveCompleteness(item),
+    blocker: item.blockerRisk || "",
+    updatesThisWeek: Number(item.updatesThisWeek || 0),
+    deps: [],
+    riskCount: 0,
+    isLive: true,
+    evidence: item.currentStatus || item.description || "No narrative evidence available.",
+  })).map((item) => ({ ...item, riskCount: computeLiveRisks([item]).length }));
+}
+
+function computeLiveRisks(items) {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  return items.flatMap((item) => {
+    const risks = [];
+    if (item.fresh >= 14) risks.push({ rule: "Stale update", severity: item.fresh >= 30 ? "critical" : "warning", detail: item.fresh >= 999 ? "No update timestamp available" : `${item.fresh} days since last update` });
+    if (["Blocked", "Delay"].includes(item.status)) risks.push({ rule: item.status === "Blocked" ? "Blocked delivery" : "Delivery delay", severity: "critical", detail: item.blocker || `Reported status is ${item.status}` });
+    if (item.due && item.due !== "Not configured") {
+      const due = new Date(`${item.due}T00:00:00`);
+      if (Number.isFinite(due.getTime()) && due < now && item.status !== "Done") risks.push({ rule: "Target date overdue", severity: "critical", detail: `Target date ${item.due} has passed` });
+    }
+    if (!item.owner || item.owner === "Unassigned") risks.push({ rule: "Missing owner", severity: "warning", detail: "No accountable owner is configured" });
+    if (!item.due || item.due === "Not configured") risks.push({ rule: "Missing target date", severity: "info", detail: "No target completion date is configured" });
+    if (hasMeaningfulBlocker(item.blocker) && !["Blocked", "Delay"].includes(item.status)) risks.push({ rule: "Blocker reported", severity: "warning", detail: item.blocker });
+    if (item.completeness < 70) risks.push({ rule: "Low update completeness", severity: "info", detail: `${item.completeness}% of core fields complete` });
+    return risks.map((risk) => ({ ...risk, itemId: item.id, itemName: item.name, owner: item.owner }));
+  });
+}
+
+function getFictionalIntelligenceItems() {
+  const items = getDemoItems(state.demo.weekIndex);
+  const bundle = state.demo.importBundle;
+  if (!bundle?.records?.length || state.demo.weekIndex !== DEMO_WEEKS.length - 1) return items;
+  return items.map((item) => {
+    const imported = bundle.records.find((record) => record.product === item.name);
+    if (!imported) return item;
+    const hasProgress = Number.isFinite(imported.progress);
+    return {
+      ...item,
+      owner: imported.owner && imported.owner !== "Unassigned" ? imported.owner : item.owner,
+      status: imported.status === "Needs Review" ? item.status : imported.status,
+      actual: hasProgress ? imported.progress : item.actual,
+      target: hasProgress ? 100 : item.target,
+      unit: hasProgress ? "%" : item.unit,
+      progress: hasProgress ? imported.progress : item.progress,
+      change: hasProgress ? imported.progress - item.previous : item.change,
+      riskCount: item.riskCount + bundle.risks.filter((risk) => risk.product === item.name).length,
+      newFromCapture: true,
+      sourceExcerpt: imported.sourceExcerpt,
+    };
+  });
+}
+
 function renderExecutionIntelligence() {
-  const allItems = getDemoItems(state.demo.weekIndex);
+  const isLive = state.demo.intelligenceMode === "live";
+  const allItems = isLive ? getLiveIntelligenceItems() : getFictionalIntelligenceItems();
   const items = filteredDemoItems(allItems);
-  const risks = computeDemoRisks(items);
+  const risks = isLive ? computeLiveRisks(items) : computeDemoRisks(items);
   const selected = allItems.find((item) => item.id === state.demo.selectedId) || null;
-  const compare = compareDemoWeeks(state.demo.compareFrom, state.demo.weekIndex);
+  const compare = isLive ? [] : compareDemoWeeks(state.demo.compareFrom, state.demo.weekIndex);
   const critical = risks.filter((risk) => risk.severity === "critical").length;
-  const avgProgress = Math.round(allItems.reduce((sum, item) => sum + item.progress, 0) / allItems.length);
+  const measurable = allItems.filter((item) => Number.isFinite(item.progress));
+  const avgProgress = measurable.length ? Math.round(measurable.reduce((sum, item) => sum + item.progress, 0) / measurable.length) : null;
+  const freshCount = allItems.filter((item) => item.fresh < (isLive ? 14 : 7)).length;
+  const coverage = allItems.length ? Math.round(allItems.reduce((sum, item) => sum + item.completeness, 0) / allItems.length) : 0;
+  const preCaptureRiskCount = isLive ? 0 : computeDemoRisks(getDemoItems(state.demo.weekIndex)).length;
   const content = html`<section class="control-room">
+    <section class="mode-switcher demo-panel" aria-label="Intelligence data mode"><div><span class="demo-kicker">Data source</span><h2>Choose the evidence boundary</h2></div><div class="mode-options"><button class="secondary ${isLive ? "active" : ""}" data-intelligence-mode="live"><strong>Live Read-Only</strong><span>Shared Board · deterministic analysis</span></button><button class="secondary ${!isLive ? "active" : ""}" data-intelligence-mode="fictional"><strong>Fictional Demo</strong><span>Isolated Capture workspace</span></button></div></section>
+    <div class="provenance-banner ${isLive ? "live" : "fictional"}"><strong>${isLive ? "LIVE READ-ONLY PORTFOLIO" : "FICTIONAL AI LAB"}</strong><span>${isLive ? "Derived from the shared Board. No changes can be written back. No external AI is called." : "Demonstration records only. Capture imports remain local to this browser."}</span></div>
+    ${!isLive && state.demo.importBundle?.records?.length ? `<section class="capture-impact demo-panel"><div><span class="demo-kicker">Before → After Capture</span><h2>${state.demo.importBundle.records.length} approved updates applied to W28</h2><p>Attention signals changed from <strong>${preCaptureRiskCount}</strong> to <strong>${computeDemoRisks(allItems).length}</strong>; imported evidence is marked on the map.</p></div><div><span><strong>${state.demo.importBundle.risks.length}</strong> extracted risks</span><span><strong>${state.demo.importBundle.decisions.length}</strong> decisions</span><span><strong>${state.demo.importBundle.actions.length}</strong> actions</span><button class="secondary" id="back-to-import">View import summary</button></div></section>` : ""}
     <section class="control-header demo-panel">
       <div><span class="demo-kicker">Overview → Explore → Diagnose → Act</span><h2>Portfolio execution, explained</h2><p>Reported progress and rule-based signals are shown separately. No black-box forecast.</p></div>
       <div class="control-actions"><label>Group map by<select id="demo-group"><option value="area" ${state.demo.groupBy === "area" ? "selected" : ""}>Product area</option><option value="segment" ${state.demo.groupBy === "segment" ? "selected" : ""}>Segment</option><option value="status" ${state.demo.groupBy === "status" ? "selected" : ""}>Status</option><option value="owner" ${state.demo.groupBy === "owner" ? "selected" : ""}>Owner</option></select></label><button class="secondary" id="clear-demo-filter" ${state.demo.filter ? "" : "disabled"}>Clear filter</button></div>
     </section>
-    <section class="signal-strip"><div><span>Reported progress</span><strong>${avgProgress}%</strong><small>+4 pts vs prior week</small></div><div><span>Attention required</span><strong>${risks.length}</strong><small>${critical} critical signals</small></div><div><span>Fresh evidence</span><strong>${allItems.filter((item) => item.fresh < 7).length}/${allItems.length}</strong><small>Updated within 7 days</small></div><div><span>Delivery confidence</span><strong>Medium</strong><small>Rule-based · explainable</small></div></section>
-    <section class="playback demo-panel"><div><button class="secondary playback-button" id="play-demo" aria-label="Play weekly history">▶</button><div><strong>Weekly playback</strong><span>See the portfolio change as one coordinated system.</span></div></div><input id="week-playback" type="range" min="0" max="4" value="${state.demo.weekIndex}" aria-label="Reporting week"><div class="week-labels">${DEMO_WEEKS.map((week, index) => `<span class="${index === state.demo.weekIndex ? "active" : ""}">${week}</span>`).join("")}</div></section>
+    <section class="signal-strip"><div><span>Reported progress</span><strong>${avgProgress == null ? "Not configured" : `${avgProgress}%`}</strong><small>${isLive ? `${measurable.length}/${allItems.length} measurable workstreams` : "+4 pts vs prior week"}</small></div><div><span>Attention required</span><strong>${risks.length}</strong><small>${critical} critical signals</small></div><div><span>Fresh evidence</span><strong>${freshCount}/${allItems.length}</strong><small>Updated within ${isLive ? 14 : 7} days</small></div><div><span>Data coverage</span><strong>${coverage}%</strong><small>Rule-based · explainable</small></div></section>
+    ${isLive ? `<section class="live-evidence-strip demo-panel"><div><strong>${allItems.filter((item) => item.updatesThisWeek > 0).length}</strong><span>updated this reporting week</span></div><div><strong>${allItems.filter((item) => item.due === "Not configured").length}</strong><span>missing target date</span></div><div><strong>${allItems.filter((item) => ["Blocked", "Delay"].includes(item.status)).length}</strong><span>reported blocked or delayed</span></div><p><strong>Metric policy:</strong> unavailable values remain unavailable; the system does not infer numeric progress from status.</p></section>` : `<section class="playback demo-panel"><div><button class="secondary playback-button" id="play-demo" aria-label="Play weekly history">▶</button><div><strong>Weekly playback</strong><span>See the portfolio change as one coordinated system.</span></div></div><input id="week-playback" type="range" min="0" max="4" value="${state.demo.weekIndex}" aria-label="Reporting week"><div class="week-labels">${DEMO_WEEKS.map((week, index) => `<span class="${index === state.demo.weekIndex ? "active" : ""}">${week}</span>`).join("")}</div></section>`}
     ${state.demo.filter ? `<div class="active-filter">Cross-filter active: <strong>${escapeHtml(state.demo.filter)}</strong><button id="remove-filter" aria-label="Remove filter">×</button></div>` : ""}
     <section class="control-grid">
       <div class="demo-panel execution-map-panel"><div class="demo-panel-heading"><div><span class="demo-kicker">Explore</span><h2>Interactive execution map</h2></div><span class="demo-badge neutral">${items.length} workstreams</span></div>${renderExecutionMap(items)}</div>
       <aside class="demo-panel attention-panel"><div class="demo-panel-heading"><div><span class="demo-kicker">Diagnose</span><h2>Attention required</h2></div><span class="demo-badge critical">${critical} critical</span></div><div class="attention-list">${risks.slice(0, 8).map((risk) => `<button data-risk-item="${risk.itemId}"><span class="risk-dot ${risk.severity}"></span><span><strong>${escapeHtml(risk.itemName)}</strong><small>${escapeHtml(risk.rule)} · ${escapeHtml(risk.detail)}</small></span><b>→</b></button>`).join("")}</div></aside>
     </section>
     <section class="demo-panel heatmap-panel"><div class="demo-panel-heading"><div><span class="demo-kicker">Cross-filter</span><h2>Portfolio signal matrix</h2></div><span class="muted">Select any cell to coordinate the map and risk list</span></div>${renderSignalHeatmap(allItems)}</section>
-    <section class="demo-panel compare-panel"><div class="demo-panel-heading"><div><span class="demo-kicker">Compare</span><h2>What changed?</h2></div><label>Compare from<select id="compare-week">${DEMO_WEEKS.slice(0, state.demo.weekIndex).map((week, index) => `<option value="${index}" ${index === state.demo.compareFrom ? "selected" : ""}>${week}</option>`).join("")}</select></label></div><div class="compare-summary">${["Improved", "Deteriorated", "Completed", "No change"].map((outcome) => `<div><strong>${compare.filter((item) => item.outcome === outcome).length}</strong><span>${outcome}</span></div>`).join("")}</div><div class="compare-list">${compare.map((item) => `<button data-select-demo="${item.id}"><span>${escapeHtml(item.name)}</span><strong class="outcome-${item.outcome.toLowerCase().replace(" ", "-")}">${item.delta > 0 ? "+" : ""}${item.delta} · ${item.outcome}</strong></button>`).join("")}</div></section>
-    ${selected ? renderExecutionDrawer(selected, computeDemoRisks([selected])) : ""}
+    ${isLive ? `<section class="demo-panel live-method-panel"><div class="demo-panel-heading"><div><span class="demo-kicker">Method</span><h2>What the live engine will—and will not—claim</h2></div><span class="demo-badge neutral">Deterministic</span></div><div><p><strong>Reported</strong>Status, owner, target date, blocker and last update come directly from the shared Board.</p><p><strong>Derived</strong>Staleness, overdue dates, missing fields and attention priority come from visible rules.</p><p><strong>Unavailable</strong>Progress, dependencies and trends remain unavailable when source fields do not support them.</p></div></section>` : `<section class="demo-panel compare-panel"><div class="demo-panel-heading"><div><span class="demo-kicker">Compare</span><h2>What changed?</h2></div><label>Compare from<select id="compare-week">${DEMO_WEEKS.slice(0, state.demo.weekIndex).map((week, index) => `<option value="${index}" ${index === state.demo.compareFrom ? "selected" : ""}>${week}</option>`).join("")}</select></label></div><div class="compare-summary">${["Improved", "Deteriorated", "Completed", "No change"].map((outcome) => `<div><strong>${compare.filter((item) => item.outcome === outcome).length}</strong><span>${outcome}</span></div>`).join("")}</div><div class="compare-list">${compare.map((item) => `<button data-select-demo="${item.id}"><span>${escapeHtml(item.name)}</span><strong class="outcome-${item.outcome.toLowerCase().replace(" ", "-")}">${item.delta > 0 ? "+" : ""}${item.delta} · ${item.outcome}</strong></button>`).join("")}</div></section>`}
+    ${selected ? renderExecutionDrawer(selected, isLive ? computeLiveRisks([selected]) : computeDemoRisks([selected])) : ""}
   </section>`;
-  renderDemoShell("Execution Control Room", "A coordinated view of progress, risk, dependencies and management actions across a fictional portfolio.", content);
+  renderDemoShell("Execution Control Room", isLive ? "Real Board evidence, analyzed locally with explainable rules and a hard read-only boundary." : "A coordinated view of progress, risk, dependencies and management actions across a fictional portfolio.", content);
   bindExecutionEvents();
 }
 
 function renderExecutionMap(items) {
-  const width = 760, height = 390;
-  const positions = Object.fromEntries(items.map((item, index) => [item.id, { x: 110 + (index % 4) * 180, y: 90 + Math.floor(index / 4) * 180 }]));
+  const width = 760;
+  const columns = items.length > 12 ? 5 : 4;
+  const xGap = width / columns;
+  const yGap = items.length > 12 ? 118 : 180;
+  const height = Math.max(390, Math.ceil(items.length / columns) * yGap + 50);
+  const positions = Object.fromEntries(items.map((item, index) => [item.id, { x: xGap / 2 + (index % columns) * xGap, y: 65 + Math.floor(index / columns) * yGap }]));
   const lines = items.flatMap((item) => item.deps.map((dep) => positions[dep] && `<line x1="${positions[dep].x}" y1="${positions[dep].y}" x2="${positions[item.id].x}" y2="${positions[item.id].y}" marker-end="url(#arrow)"/>`)).filter(Boolean).join("");
-  return `<div class="map-legend"><span><i class="on-track"></i>On track</span><span><i class="at-risk"></i>At risk</span><span><i class="blocked"></i>Blocked</span><span>Size = reported progress</span><span>Ring = evidence freshness</span></div><svg class="execution-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Dependency map of fictional workstreams"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z"/></marker></defs><g class="dependency-lines">${lines}</g>${items.map((item) => { const p = positions[item.id]; const radius = 28 + item.progress * .14; return `<g class="map-node ${statusClass(item.status)} ${state.demo.selectedId === item.id ? "selected" : ""}" tabindex="0" role="button" data-select-demo="${item.id}" transform="translate(${p.x} ${p.y})"><circle class="freshness-ring ${item.fresh >= 7 ? "stale" : ""}" r="${radius + 7}"/><circle class="node-body" r="${radius}"/><text class="node-progress" y="4">${item.progress}%</text><text class="node-name" y="${radius + 22}">${escapeHtml(item.name)}</text></g>`; }).join("")}</svg>`;
+  const live = items.some((item) => item.isLive);
+  return `<div class="map-legend"><span><i class="on-track"></i>Active</span><span><i class="at-risk"></i>Delay</span><span><i class="blocked"></i>Blocked</span><span>${live ? "Fixed size = metric unavailable" : "Size = reported progress"}</span><span>Ring = evidence freshness</span></div><svg class="execution-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Execution map of ${live ? "live read-only" : "fictional"} workstreams"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z"/></marker></defs><g class="dependency-lines">${lines}</g>${items.map((item) => { const p = positions[item.id]; const radius = Number.isFinite(item.progress) ? 28 + item.progress * .14 : 34; const shortName = item.name.length > 20 ? `${item.name.slice(0, 18)}…` : item.name; return `<g class="map-node ${statusClass(item.status)} ${state.demo.selectedId === item.id ? "selected" : ""}" tabindex="0" role="button" data-select-demo="${item.id}" transform="translate(${p.x} ${p.y})"><circle class="freshness-ring ${item.fresh >= (live ? 14 : 7) ? "stale" : ""}" r="${radius + 7}"/><circle class="node-body" r="${radius}"/><text class="node-progress" y="4">${Number.isFinite(item.progress) ? `${item.progress}%` : "—"}</text>${item.newFromCapture ? `<text class="node-new" y="-${radius + 12}">NEW</text>` : ""}<text class="node-name" y="${radius + 22}">${escapeHtml(shortName)}</text></g>`; }).join("")}</svg>`;
 }
 
 function renderSignalHeatmap(items) {
-  const columns = ["Decision Intelligence", "Identity", "Fraud", "Monitoring", "Analytics", "Platform", "Operations"];
+  const columns = [...new Set(items.map((item) => item.area || "Unclassified"))].slice(0, 8);
   const rows = [{ key: "stale", label: "Stale updates", test: (i) => i.fresh >= 7 }, { key: "blocked", label: "Blocked", test: (i) => i.status === "Blocked" }, { key: "repeat-risk", label: "Repeated risks", test: (i) => i.riskCount >= 3 }, { key: "low-completeness", label: "Low completeness", test: (i) => i.completeness < 75 }];
   return `<div class="signal-matrix" style="--matrix-columns:${columns.length}"><div></div>${columns.map((column) => `<strong>${escapeHtml(column)}</strong>`).join("")}${rows.map((row) => `<span>${row.label}</span>${columns.map((column) => { const count = items.filter((item) => item.area === column && row.test(item)).length; return `<button data-demo-filter="${row.key}" class="heat-${Math.min(3, count)}" title="Filter by ${row.label}">${count}</button>`; }).join("")}`).join("")}</div>`;
 }
 
 function renderExecutionDrawer(item, risks) {
-  return html`<aside class="demo-drawer" aria-label="Selected workstream details"><div class="drawer-heading"><div><span class="demo-kicker">Act</span><h2>${escapeHtml(item.name)}</h2><span class="status-pill ${statusClass(item.status)}">${escapeHtml(item.status)}</span></div><button class="secondary" id="close-demo-drawer" aria-label="Close details">×</button></div><div class="drawer-metric"><span>${escapeHtml(item.metric)}</span><strong>${item.actual}${escapeHtml(item.unit)}</strong><div><i style="width:${item.progress}%"></i></div><small>${item.progress}% of ${item.target}${escapeHtml(item.unit)} target · reported, not forecast</small></div><div class="drawer-grid"><div><span>Owner</span><strong>${escapeHtml(item.owner)}</strong></div><div><span>Target date</span><strong>${escapeHtml(item.due)}</strong></div><div><span>Freshness</span><strong>${item.fresh} days</strong></div><div><span>Completeness</span><strong>${item.completeness}%</strong></div></div><h3>Why this needs attention</h3><div class="drawer-risks">${risks.length ? risks.map((risk) => `<div><span class="risk-dot ${risk.severity}"></span><p><strong>${escapeHtml(risk.rule)}</strong><small>${escapeHtml(risk.detail)}</small></p></div>`).join("") : `<p class="muted">No active rule-based signals.</p>`}</div><h3>Dependencies</h3><p>${item.deps.length ? item.deps.map((dep) => escapeHtml(dep.replaceAll("-", " "))).join(" · ") : "No upstream dependency"}</p><details class="metric-builder"><summary>Configure metric</summary><label>Template<select><option>Percentage complete</option><option>Count toward target</option><option>Milestone weighted</option></select></label><label>Metric name<input value="${escapeHtml(item.metric)}"></label><div class="demo-form-grid"><label>Current<input type="number" value="${item.actual}"></label><label>Target<input type="number" value="${item.target}"></label></div><button type="button" id="save-demo-metric">Save locally</button></details><div class="drawer-actions"><button class="secondary" id="demo-add-evidence">Add fictional evidence</button><button id="demo-create-action">Create demo action</button></div><p class="drawer-footnote">Demo-only actions are stored locally and never call the production API.</p></aside>`;
+  const hasMetric = Number.isFinite(item.progress);
+  return html`<aside class="demo-drawer" aria-label="Selected workstream details"><div class="drawer-heading"><div><span class="demo-kicker">${item.isLive ? "Reported + Derived" : "Act"}</span><h2>${escapeHtml(item.name)}</h2><span class="status-pill ${statusClass(item.status)}">${escapeHtml(item.status)}</span>${item.newFromCapture ? `<span class="demo-badge success">New from Capture</span>` : ""}</div><button class="secondary" id="close-demo-drawer" aria-label="Close details">×</button></div><div class="drawer-metric ${hasMetric ? "" : "unavailable"}"><span>${escapeHtml(item.metric)}</span><strong>${hasMetric ? `${item.actual}${escapeHtml(item.unit)}` : "Unavailable"}</strong>${hasMetric ? `<div><i style="width:${item.progress}%"></i></div><small>${item.progress}% of ${item.target}${escapeHtml(item.unit)} target · reported, not forecast</small>` : `<small>The source Board has no configured quantitative metric. No value is inferred.</small>`}</div><div class="drawer-grid"><div><span>Owner · Reported</span><strong>${escapeHtml(item.owner)}</strong></div><div><span>Target date · Reported</span><strong>${escapeHtml(item.due)}</strong></div><div><span>Freshness · Derived</span><strong>${item.fresh >= 999 ? "Unavailable" : `${item.fresh} days`}</strong></div><div><span>Completeness · Derived</span><strong>${item.completeness}%</strong></div></div><h3>Why this needs attention</h3><div class="drawer-risks">${risks.length ? risks.map((risk) => `<div><span class="risk-dot ${risk.severity}"></span><p><strong>${escapeHtml(risk.rule)}</strong><small>${escapeHtml(risk.detail)}</small></p></div>`).join("") : `<p class="muted">No active rule-based signals.</p>`}</div>${item.sourceExcerpt ? `<h3>Sanitized source excerpt</h3><p class="source-excerpt">${escapeHtml(item.sourceExcerpt)}</p>` : ""}<h3>Dependencies</h3><p>${item.deps.length ? item.deps.map((dep) => escapeHtml(dep.replaceAll("-", " "))).join(" · ") : item.isLive ? "Unavailable — no structured dependency field in the source Board." : "No upstream dependency"}</p>${item.isLive ? `<div class="read-only-callout"><strong>Read-only evidence</strong><span>This panel cannot edit or write back to the shared Board.</span></div>` : `<details class="metric-builder"><summary>Configure metric</summary><label>Template<select><option>Percentage complete</option><option>Count toward target</option><option>Milestone weighted</option></select></label><label>Metric name<input value="${escapeHtml(item.metric)}"></label><div class="demo-form-grid"><label>Current<input type="number" value="${item.actual}"></label><label>Target<input type="number" value="${item.target}"></label></div><button type="button" id="save-demo-metric">Save locally</button></details><div class="drawer-actions"><button class="secondary" id="demo-add-evidence">Add fictional evidence</button><button id="demo-create-action">Create demo action</button></div><p class="drawer-footnote">Demo-only actions are stored locally and never call the production API.</p>`}</aside>`;
 }
 
 let demoPlaybackTimer;
 function bindExecutionEvents() {
   clearInterval(demoPlaybackTimer);
+  document.querySelectorAll("[data-intelligence-mode]").forEach((button) => button.addEventListener("click", () => {
+    state.demo.intelligenceMode = button.dataset.intelligenceMode;
+    state.demo.selectedId = "";
+    state.demo.filter = "";
+    localStorage.setItem("pib_intelligence_mode", state.demo.intelligenceMode);
+    render();
+  }));
+  document.querySelector("#back-to-import")?.addEventListener("click", () => { state.demo.captureStep = "done"; state.view = "smartCapture"; render(); });
   document.querySelector("#demo-group")?.addEventListener("change", (event) => { state.demo.groupBy = event.target.value; render(); });
   document.querySelector("#week-playback")?.addEventListener("input", (event) => { state.demo.weekIndex = Number(event.target.value); if (state.demo.compareFrom >= state.demo.weekIndex) state.demo.compareFrom = Math.max(0, state.demo.weekIndex - 1); render(); });
   document.querySelector("#play-demo")?.addEventListener("click", () => { state.demo.weekIndex = 0; render(); demoPlaybackTimer = setInterval(() => { if (state.view !== "executionIntelligence" || state.demo.weekIndex >= 4) return clearInterval(demoPlaybackTimer); state.demo.weekIndex += 1; renderExecutionIntelligence(); }, 900); });
