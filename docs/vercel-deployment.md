@@ -31,6 +31,15 @@ SUPABASE_STATE_ID=production
 SESSION_SECRET=replace-with-a-long-random-string
 ```
 
+For a production-data mirror that must never write to the shared state, also set:
+
+```env
+MIRROR_READ_ONLY=true
+```
+
+This server-side guard blocks every data-changing API route while keeping login,
+logout, PM profile selection, dashboards, filters, archives, and timelines readable.
+
 Optional backend passcode overrides:
 
 ```env
