@@ -26,7 +26,7 @@ export function computeDemoRisks(items) {
     const risks = [];
     if (item.fresh >= 7) risks.push({ rule: "Stale update", severity: item.fresh >= 10 ? "critical" : "warning", detail: `${item.fresh} days since last evidence` });
     if (item.status === "Blocked") risks.push({ rule: "Long blocked", severity: "critical", detail: "Blocked across 3 reporting cycles" });
-    if (item.progress < 70 && ["09 Jul", "12 Jul", "15 Jul"].includes(item.due)) risks.push({ rule: "Due date pressure", severity: "critical", detail: `${item.progress}% complete near or after target date` });
+    if (Number.isFinite(item.progress) && item.progress < 70 && ["09 Jul", "12 Jul", "15 Jul"].includes(item.due)) risks.push({ rule: "Due date pressure", severity: "critical", detail: `${item.progress}% complete near or after target date` });
     if (item.change === 0 && item.status !== "Done") risks.push({ rule: "Unchanged progress", severity: "warning", detail: "No measurable movement this week" });
     if (item.riskCount >= 3) risks.push({ rule: "Repeated blocker", severity: "warning", detail: `${item.riskCount} linked risk signals` });
     if (item.deps.length >= 2) risks.push({ rule: "Dependency concentration", severity: "warning", detail: `${item.deps.length} upstream dependencies` });
@@ -59,37 +59,138 @@ export function scanDemoPrivacy(text) {
   return { safe: findings.length === 0, findings, sanitized };
 }
 
-export const SAMPLE_MESSAGE = `[08-Jul-2026] Fictional Portfolio Weekly Review
-Atlas Score validation reached 79%. Team Member A will close the remaining test gaps by 18 Jul.
-Nova Verify UAT is at 58% and at risk because the sandbox response is late. Team Member B to confirm a recovery plan by Friday.
-Orbit Shield remains blocked at 67 of 120 rules migrated. Decision needed: approve a temporary manual review path.
-Horizon Alert precision improved to 84%. Next step is a controlled pilot with Example Bank.
-Meridian Insights adoption is unchanged at 4 of 8 dashboards. Risk: sponsor availability.
-All names and products in this message are fictional.`;
+export const SAMPLE_MESSAGE = `[20-Jul-2026] Fictional H1 Review & H2 Plan | Portfolio MMR
+The leadership team will be in Example City next week. Please ensure attendance.
+
+H1 REVIEW & H2 PLAN
+Atlas Score
+Team Member A and Team Member B to clarify the key difference between Atlas Score and the legacy score [Thinking]
+
+Nova Verify
+v2 is a key H2 priority. Service tiering requires Team Member C alignment.
+Partner Echo integration was discussed with Team Member D and Team Member E; commitment still needs confirmation.
+
+Orbit Shield
+Team Member F and Team Member G to prepare the BRD request.
+Engineering will not start development without BRD approval and sign-off.
+
+Horizon Alert
+Employment verification received positive initial feedback.
+To do: draft a BRD. Owner needs confirmation between Team Member H and Team Member A.
+
+H1 REVIEW FINDINGS
+Revenue enablement gap
+Training is required on how to position score products. Team Member B and Team Member A to propose a session.
+Potential option: hire a presales specialist with banking experience.
+
+Vector Connect
+Team Member B to walk the three business units through how products map to bank services.
+
+PORTFOLIO MMR
+Meridian Insights
+Additional use cases were explored; no material opportunity was found. Close the exploration.
+
+Quartz Risk
+Compliance follow-up is waiting for a response by tomorrow. Team Member D to check.
+
+Horizon Alert
+Marketing material and a short product video are required. Team Member C to coordinate.
+
+All names, organisations and products in this message are fictional.`;
 
 export function extractDemoUpdate(text) {
   const lines = String(text || "").split(/\n+/).map((line) => line.trim()).filter(Boolean);
   const productNames = PRODUCTS.map((item) => item.name);
   const records = [];
-  lines.forEach((line, index) => {
-    const product = productNames.find((name) => line.toLowerCase().includes(name.toLowerCase()));
-    if (!product) return;
-    const lower = line.toLowerCase();
-    const percent = line.match(/\b(\d{1,3})%/);
-    const owner = line.match(/Team Member [A-D]/i)?.[0] || "Unassigned";
-    records.push({
-      id: `draft-${index}`, product, owner, sourceExcerpt: line, confidence: percent ? 0.94 : 0.82,
-      status: lower.includes("blocked") ? "Blocked" : lower.includes("risk") ? "At Risk" : lower.includes("reached") || lower.includes("improved") ? "On Track" : "Needs Review",
-      progress: percent ? Number(percent[1]) : null,
-      blocker: lower.includes("because") ? line.split(/because/i)[1]?.split(".")[0]?.trim() : lower.includes("risk:") ? line.split(/risk:/i)[1]?.split(".")[0]?.trim() : "",
-      nextStep: lower.includes("next step") ? line.split(/next step(?: is)?/i)[1]?.trim() : lower.includes(" will ") ? line.split(/ will /i)[1]?.trim() : "",
-      decision: lower.includes("decision needed") ? line.split(/decision needed:/i)[1]?.trim() : "",
-      approved: true,
-    });
+  const actions = [];
+  const decisions = [];
+  const risks = [];
+  const gates = [];
+  const pmmRequests = [];
+  const questions = [];
+  let currentProduct = "Portfolio";
+
+  const ownersFrom = (line) => [...new Set(line.match(/Team Member [A-Z]/gi) || [])];
+  const add = (collection, type, line, index, overrides = {}) => collection.push({
+    id: `${type}-${index}`,
+    recordType: type,
+    product: currentProduct,
+    text: line.replace(/\[Thinking\]/gi, "").trim(),
+    evidence: line,
+    owners: ownersFrom(line),
+    owner: ownersFrom(line).join(", ") || "Unassigned",
+    dueDate: /by tomorrow/i.test(line) ? "2026-07-21" : null,
+    progress: null,
+    approved: true,
+    confidence: 0.9,
+    requiresConfirmation: false,
+    ...overrides,
   });
-  const decisions = records.filter((record) => record.decision).map((record) => ({ product: record.product, text: record.decision }));
-  const risks = records.filter((record) => record.blocker || record.status === "Blocked").map((record) => ({ product: record.product, text: record.blocker || "Blocked delivery path" }));
-  return { records, decisions, risks, actions: records.filter((record) => record.nextStep).map((record) => ({ product: record.product, owner: record.owner, text: record.nextStep })) };
+
+  lines.forEach((line, index) => {
+    const exactProduct = productNames.find((name) => line.toLowerCase() === name.toLowerCase());
+    if (exactProduct) {
+      currentProduct = exactProduct;
+      if (!records.some((record) => record.product === exactProduct)) add(records, "topic", line, index, { text: `Execution topic detected: ${exactProduct}`, status: "Needs Update", confidence: 0.99 });
+      return;
+    }
+    const lower = line.toLowerCase();
+    if (/fictional|leadership team|h1 review|portfolio mmr/.test(lower)) return;
+    const percent = line.match(/\b(\d{1,3})%/);
+    if (percent) {
+      const record = records.find((entry) => entry.product === currentProduct);
+      if (record) {
+        record.progress = Number(percent[1]);
+        record.progressEvidence = line;
+        record.status = "Reported";
+      }
+    }
+    if (/to clarify|to prepare|to propose|to walk|to check|to coordinate|to do:|requires .* alignment/i.test(line)) {
+      const ownerAmbiguous = /owner needs confirmation/i.test(line);
+      add(actions, "action", line, index, { executionState: "open", confidence: ownerAmbiguous ? 0.72 : 0.93, requiresConfirmation: ownerAmbiguous, owner: ownerAmbiguous ? "Unassigned" : ownersFrom(line).join(", ") || "Unassigned", confirmationReason: ownerAmbiguous ? "Multiple people are mentioned; accountable owner is unclear." : "" });
+    }
+    if (/needs confirmation|owner needs confirmation|discussed with/i.test(line)) {
+      add(questions, "question", line, index, { requiresConfirmation: true, confidence: 0.72, confirmationReason: /owner/i.test(line) ? "Multiple people are mentioned; accountable owner is unclear." : "The wording does not establish a confirmed commitment." });
+    }
+    if (/will not start development without|approval and sign-off/i.test(line)) {
+      add(gates, "gate", line, index, { executionState: "awaiting_brd", confidence: 0.97 });
+      add(risks, "risk", line, index, { severity: "warning", executionState: "blocked_by_prerequisite", confidence: 0.95 });
+    }
+    if (/key h2 priority/i.test(line)) add(decisions, "priority", line, index, { executionState: "strategic_priority", confidence: 0.96 });
+    if (/positive initial feedback/i.test(line)) add(decisions, "decision", line, index, { executionState: "concept_supported", confidence: 0.88 });
+    if (/close the exploration/i.test(line)) add(decisions, "closed_finding", line, index, { executionState: "closed_no_opportunity", confidence: 0.98 });
+    if (/training is required|enablement gap/i.test(line)) add(risks, "strategic_risk", line, index, { severity: "warning", executionState: "open", confidence: 0.9 });
+    if (/waiting for a response|by tomorrow/i.test(line)) add(risks, "follow_up_risk", line, index, { severity: "warning", executionState: "waiting", confidence: 0.95 });
+    if (/marketing material|product video/i.test(line)) add(pmmRequests, "pmm_request", line, index, { executionState: "open", confidence: 0.97 });
+  });
+
+  records.forEach((record) => {
+    const related = [...actions, ...decisions, ...risks, ...gates, ...pmmRequests].filter((entry) => entry.product === record.product);
+    const ownerQuestion = questions.find((question) => question.product === record.product && /accountable owner is unclear/i.test(question.confirmationReason || ""));
+    record.sourceExcerpt = related[0]?.evidence || record.product;
+    record.owner = ownerQuestion ? "Unassigned" : related.map((entry) => entry.owner).find((owner) => owner && owner !== "Unassigned") || "Unassigned";
+    record.status = gates.some((gate) => gate.product === record.product) ? "Awaiting BRD" : decisions.some((decision) => decision.product === record.product && decision.recordType === "closed_finding") ? "Closed" : record.status;
+    record.requiresConfirmation = questions.some((question) => question.product === record.product);
+  });
+
+  const allActions = [...actions, ...pmmRequests];
+  return {
+    summary: "The review identified strategic priorities, execution actions, an approval gate, a commercial enablement gap, a compliance follow-up and a PMM request. Numeric progress was not reported.",
+    records,
+    actions: allActions,
+    decisions,
+    risks,
+    gates,
+    pmmRequests,
+    questions,
+    metrics: {
+      actions: allActions.length,
+      ownerCoverage: allActions.length ? Math.round(allActions.filter((item) => item.owner !== "Unassigned").length / allActions.length * 100) : 0,
+      dueDateCoverage: allActions.length ? Math.round(allActions.filter((item) => item.dueDate).length / allActions.length * 100) : 0,
+      progressCoverage: records.length ? Math.round(records.filter((item) => Number.isFinite(item.progress)).length / records.length * 100) : 0,
+      confirmations: questions.length,
+    },
+  };
 }
 
 export function compareDemoWeeks(fromIndex, toIndex) {
